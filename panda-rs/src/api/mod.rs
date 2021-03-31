@@ -1,14 +1,13 @@
-mod llvm;
-pub use llvm::*;
+/// Functions for working with PANDA's LLVM execution
+pub mod llvm;
+/// Utilities for working with the guest's memory
+pub mod mem;
+/// Functions for reading and modifying guest registers
+pub mod regs;
 
-mod mem;
-pub use mem::*;
-
+/// Miscellaneous PANDA API utilities
 mod misc;
 pub use misc::*;
-
-mod regs;
-pub use regs::*;
 
 mod utils;
 pub use utils::*;

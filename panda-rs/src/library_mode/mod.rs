@@ -41,6 +41,7 @@ pub struct Panda {
     arch: Option<Arch>,
     extra_args: Vec<String>,
     replay: Option<String>,
+    configurable: bool,
 }
 
 impl Panda {
@@ -107,7 +108,22 @@ impl Panda {
     /// ```
     pub fn arch(&mut self, arch: Arch) -> &mut Self {
         self.arch = Some(arch);
-        
+
+        self
+    }
+
+    /// Set the machine to PANDA's configurable machine
+    ///
+    /// ### Example
+    /// ```rust
+    /// # use panda::{prelude::*, Arch};
+    /// Panda::new()
+    ///     .configurable()
+    ///     .run();
+    /// ```
+    pub fn configurable(&mut self) -> &mut Self {
+        self.configurable = true;
+
         self
     }
 
@@ -207,11 +223,10 @@ impl Panda {
                 .as_ref()
                 .map(|generic| qcows::get_supported_image(generic));
 
-        let qcow_path = self.qcow.clone().unwrap_or_else(||{
+        let qcow_path = self.qcow.clone().map(Some).unwrap_or_else(||{
             self.generic_qcow
                 .as_ref()
                 .map(|generic| qcows::get_generic_path(generic).display().to_string())
-                .expect("Either a qcow or a generic image must be specified.")
         });
         
         let arch = self.arch
@@ -235,12 +250,20 @@ impl Panda {
                 + "/pc-bios",
             "-m".into(),
             mem,
-            qcow_path,
         ];
+
+        if let Some(qcow) = qcow_path {
+            args.push(qcow)
+        }
 
         if let Some(generic) = generic_info {
             args.push("-os".into());
             args.push(generic.os.into());
+        }
+
+        if self.configurable {
+            args.push("-M".into());
+            args.push("configurable".into());
         }
 
         if !self.graphics {
@@ -279,12 +302,16 @@ impl Panda {
         let x = &mut 0i8;
         let empty = &mut (x as *mut c_char);
         unsafe {
+            for cb in inventory::iter::<Callback> {
+                sys::panda_register_callback(
+                    self as *mut _ as _,
+                    cb.cb_type,
+                    ::core::mem::transmute(cb.fn_pointer)
+                );
+            }
+
             panda_set_library_mode(true);
             panda_init(args_ptrs.len() as i32, transmute(args_ptrs.as_ptr()), empty);
-
-            for cb in inventory::iter::<Callback> {
-                sys::panda_register_callback(self as *mut _ as _, cb.cb_type, ::core::mem::transmute(cb.fn_pointer));
-            }
             
             for cb in inventory::iter::<PPPCallbackSetup> {
                 cb.0();

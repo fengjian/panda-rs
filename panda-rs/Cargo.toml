@@ -15,6 +15,14 @@ name = "panda"
 name = "showcase"
 required-features = ["libpanda"]
 
+[[example]]
+name = "dump_regs"
+required-features = ["libpanda"]
+
+[[example]]
+name = "unicorn"
+required-features = ["libpanda"]
+
 [dependencies]
 panda-re-sys = { version = "0.1", path = "../panda-sys" }
 panda-re-macros = { version = "0.3", path = "../panda-macros" }
@@ -26,6 +34,7 @@ paste = "1.0.0"
 glib-sys = "0.10.0"
 strum = "0.20"
 strum_macros = "0.20"
+thiserror = "1"
 #llvm-ir = { version = "0.7.4", features = ["llvm-10"] }
 
 [features]
