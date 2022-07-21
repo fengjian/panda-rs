@@ -1,6 +1,6 @@
 [package]
 name = "panda-re-sys"
-version = "0.1.0"
+version = "0.7.0"
 authors = ["Jordan McLeod <Jordan.McLeod@ll.mit.edu>"]
 edition = "2018"
 description = "The official *-sys library for interfacing with PANDA (Platform for Architecture-Neutral Dynamic Analysis)"
@@ -19,6 +19,8 @@ libpanda = []
 x86_64 = []
 i386 = []
 arm = []
+aarch64 = []
 ppc = []
 mips = []
 mipsel = []
+mips64 = []

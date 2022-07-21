@@ -1,12 +1,17 @@
 [package]
 name = "panda-re"
-version = "0.4.0"
+version = "0.35.0"
 authors = ["Jordan McLeod <Jordan.McLeod@ll.mit.edu>", "tnballo <tnballo@users.noreply.github.com>"]
 edition = "2018"
 description = "The official library for interfacing with PANDA (Platform for Architecture-Neutral Dynamic Analysis)"
 license = "GPL-2.0"
 documentation = "https://docs.rs/panda-re"
 homepage = "https://panda-re.mit.edu"
+repository = "https://github.com/panda-re/panda-rs"
+
+[package.metadata.docs.rs]
+cargo-args = ["-Zunstable-options", "-Zrustdoc-scrape-examples=examples"]
+rustdoc-args = ["--cfg", "doc_cfg"]
 
 [lib]
 name = "panda"
@@ -23,9 +28,13 @@ required-features = ["libpanda"]
 name = "unicorn"
 required-features = ["libpanda"]
 
+[[example]]
+name = "unicorn_aarch64"
+required-features = ["libpanda", "aarch64"]
+
 [dependencies]
-panda-re-sys = { version = "0.1", path = "../panda-sys" }
-panda-re-macros = { version = "0.3", path = "../panda-macros" }
+panda-re-sys = { version = "0.7", path = "../panda-sys" }
+panda-re-macros = { version = "0.21", path = "../panda-macros" }
 inventory = "0.1.8"
 dirs = "3.0.1"
 lazy_static = "1.4.0"
@@ -35,15 +44,27 @@ glib-sys = "0.10.0"
 strum = "0.20"
 strum_macros = "0.20"
 thiserror = "1"
-#llvm-ir = { version = "0.7.4", features = ["llvm-10"] }
+once_cell = "1.8.0"
+array-init = "2"
+
+# syscall-injection
+async-trait = { version = "0.1", optional = true }
+parking_lot = { version = "0.11", optional = true }
+dashmap = { version = "4", optional = true }
+log = { version = "0.4", optional = true }
 
 [features]
+default = ["x86_64", "syscall-injection"]
 libpanda = ["panda-re-sys/libpanda"]
-x86_64 = ["panda-re-sys/x86_64"]
-i386 = ["panda-re-sys/i386"]
-arm = ["panda-re-sys/arm"]
-ppc = ["panda-re-sys/ppc"]
-mips = ["panda-re-sys/mips"]
-mipsel = ["panda-re-sys/mipsel"]
+syscall-injection = ["async-trait", "parking_lot", "dashmap", "log"]
 
-default = ["x86_64"]
+# Architectures
+x86_64 = ["panda-re-sys/x86_64", "panda-re-macros/x86_64"]
+i386 = ["panda-re-sys/i386", "panda-re-macros/i386"]
+arm = ["panda-re-sys/arm", "panda-re-macros/arm"]
+aarch64 = ["panda-re-sys/aarch64", "panda-re-macros/aarch64"]
+ppc = ["panda-re-sys/ppc", "panda-re-macros/ppc"]
+mips = ["panda-re-sys/mips", "panda-re-macros/mips"]
+mipsel = ["panda-re-sys/mipsel", "panda-re-macros/mipsel"]
+mips64 = ["panda-re-sys/mips64", "panda-re-macros/mips64"]
+

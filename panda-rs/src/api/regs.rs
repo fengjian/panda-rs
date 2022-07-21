@@ -1,8 +1,21 @@
 use crate::prelude::*;
 use crate::{cpu_arch_state, CPUArchPtr};
 
-use strum_macros::{EnumString, EnumIter, ToString};
 use strum::IntoEnumIterator;
+use strum_macros::{EnumIter, EnumString, ToString};
+
+/// Type-safe API to allow APIs to accept only program counters coming from
+/// syscall callbacks. To convert to integer of the width of your target, use the
+/// `.pc()` method.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct SyscallPc(target_ulong);
+
+impl SyscallPc {
+    pub fn pc(self) -> target_ulong {
+        self.0
+    }
+}
 
 // Arch-specific mappings ----------------------------------------------------------------------------------------------
 
@@ -69,8 +82,8 @@ pub enum Reg {
     R10 = 10,
     R11 = 11,
     R12 = 12,
-    LR = 13,
-    SP = 14,
+    LR = 14,
+    SP = 13,
     IP = 15,
 }
 
@@ -78,8 +91,34 @@ pub enum Reg {
 #[cfg(feature = "arm")]
 static RET_REGS: &'static [Reg] = &[Reg::R0, Reg::R1, Reg::R2, Reg::R3];
 
+/// AArch64 named guest registers
+#[cfg(feature = "aarch64")]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, EnumString, EnumIter, ToString)]
+pub enum Reg {
+    X0 = 0,
+    X1 = 1,
+    X2 = 2,
+    X3 = 3,
+    X4 = 4,
+    X5 = 5,
+    X6 = 6,
+    X7 = 7,
+    X8 = 8,
+    X9 = 9,
+    X10 = 10,
+    X11 = 11,
+    X12 = 12,
+    LR = 13,
+    SP = 14,
+    IP = 15,
+}
+
+/// AArch64 return registers
+#[cfg(feature = "aarch64")]
+static RET_REGS: &'static [Reg] = &[Reg::X0, Reg::X1, Reg::X2, Reg::X3];
+
 /// MIPS named guest registers
-#[cfg(any(feature = "mips", feature = "mipsel"))]
+#[cfg(any(feature = "mips", feature = "mipsel", feature = "mips64"))]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, EnumString, EnumIter, ToString)]
 pub enum Reg {
     ZERO = 0,
@@ -117,13 +156,8 @@ pub enum Reg {
 }
 
 /// MIPS return registers
-#[cfg(any(feature = "mips", feature = "mipsel"))]
+#[cfg(any(feature = "mips", feature = "mipsel", feature = "mips64"))]
 static RET_REGS: &'static [Reg] = &[Reg::V0, Reg::V1];
-
-// TODO: reg map
-/// AARCH64 named guest registers
-//#[cfg(feature = "aarch64")]
-//#[derive(Debug, Copy, Clone, PartialEq, Eq, EnumString, EnumIter)]
 
 // TODO: support floating point set as well? Separate QEMU bank.
 /// PPC named guest registers
@@ -173,14 +207,19 @@ static RET_REGS: &'static [Reg] = &[Reg::R3, Reg::R4];
 
 /// Get stack pointer register
 pub fn reg_sp() -> Reg {
-
     #[cfg(feature = "i386")]
     return Reg::ESP;
 
     #[cfg(feature = "x86_64")]
     return Reg::RSP;
 
-    #[cfg(any(feature = "arm", feature = "mips", feature = "mipsel"))]
+    #[cfg(any(
+        feature = "arm",
+        feature = "aarch64",
+        feature = "mips",
+        feature = "mipsel",
+        feature = "mips64"
+    ))]
     return Reg::SP;
 
     #[cfg(any(feature = "ppc"))]
@@ -195,17 +234,16 @@ pub fn reg_ret_val() -> &'static [Reg] {
 
 /// Get return address register
 pub fn reg_ret_addr() -> Option<Reg> {
-
     #[cfg(feature = "i386")]
     return None;
 
     #[cfg(feature = "x86_64")]
     return None;
 
-    #[cfg(any(feature = "arm", feature = "ppc"))]
+    #[cfg(any(feature = "arm", feature = "aarch64", feature = "ppc"))]
     return Some(Reg::LR);
 
-    #[cfg(any(feature = "mips", feature = "mipsel"))]
+    #[cfg(any(feature = "mips", feature = "mipsel", feature = "mips64"))]
     return Some(Reg::RA);
 }
 
@@ -219,7 +257,12 @@ pub fn get_reg<T: Into<Reg>>(cpu: &CPUState, reg: T) -> target_ulong {
         val = (*cpu_arch).regs[reg.into() as usize];
     }
 
-    #[cfg(any(feature = "mips", feature = "mipsel"))]
+    #[cfg(feature = "aarch64")]
+    unsafe {
+        val = (*cpu_arch).xregs[reg.into() as usize];
+    }
+
+    #[cfg(any(feature = "mips", feature = "mipsel", feature = "mips64"))]
     unsafe {
         val = (*cpu_arch).active_tc.gpr[reg.into() as usize];
     }
@@ -246,7 +289,7 @@ pub fn set_reg<T: Into<Reg>>(cpu: &CPUState, reg: T, val: target_ulong) {
         (*cpu_arch).regs[reg.into() as usize] = val;
     }
 
-    #[cfg(any(feature = "mips", feature = "mipsel"))]
+    #[cfg(any(feature = "mips", feature = "mipsel", feature = "mips64"))]
     unsafe {
         (*cpu_arch).active_tc.gpr[reg.into() as usize] = val;
     }
@@ -259,6 +302,11 @@ pub fn set_reg<T: Into<Reg>>(cpu: &CPUState, reg: T, val: target_ulong) {
         } else {
             (*cpu_arch).gpr[reg_enum as usize] = val;
         }
+    }
+
+    #[cfg(feature = "aarch64")]
+    unsafe {
+        (*cpu_arch).xregs[reg.into() as usize] = val;
     }
 }
 
@@ -276,12 +324,17 @@ pub fn get_pc(cpu: &CPUState) -> target_ulong {
         val = (*cpu_arch).regs[15];
     }
 
+    #[cfg(feature = "aarch64")]
+    unsafe {
+        val = (*cpu_arch).pc;
+    }
+
     #[cfg(feature = "ppc")]
     unsafe {
         val = (*cpu_arch).nip;
     }
 
-    #[cfg(any(feature = "mips", feature = "mipsel"))]
+    #[cfg(any(feature = "mips", feature = "mipsel", feature = "mips64"))]
     unsafe {
         val = (*cpu_arch).active_tc.PC;
     }
@@ -302,12 +355,17 @@ pub fn set_pc(cpu: &mut CPUState, pc: target_ulong) {
         (*cpu_arch).regs[15] = pc;
     }
 
+    #[cfg(feature = "aarch64")]
+    unsafe {
+        (*cpu_arch).pc = pc;
+    }
+
     #[cfg(feature = "ppc")]
     unsafe {
         (*cpu_arch).nip = pc;
     }
 
-    #[cfg(any(feature = "mips", feature = "mipsel"))]
+    #[cfg(any(feature = "mips", feature = "mipsel", feature = "mips64"))]
     unsafe {
         (*cpu_arch).active_tc.PC = pc;
     }

@@ -1,0 +1,7 @@
+[package]
+name = "syscall-parser"
+version = "0.2.0"
+edition = "2018"
+
+[dependencies]
+peg = "0.7.0"

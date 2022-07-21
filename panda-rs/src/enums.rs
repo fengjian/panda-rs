@@ -21,6 +21,12 @@ impl From<i32> for MemRWStatus {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
+pub enum Endian {
+    Big,
+    Little,
+}
+
 /// For fallible generic C functions
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -39,3 +45,5 @@ impl From<i32> for GenericRet {
         }
     }
 }
+
+pub(crate) mod arch {}

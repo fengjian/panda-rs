@@ -1,10 +1,19 @@
+#[cfg(feature = "libpanda")]
 mod qcows;
+
+use crate::PandaArgs;
 use std::fmt;
-use panda_sys::{panda_set_library_mode, panda_init, panda_run};
-use std::os::raw::c_char;
-use std::ffi::CString;
-use std::mem::transmute;
-use super::{inventory, Callback, PPPCallbackSetup, sys, PandaArgs};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(feature = "libpanda")]
+use std::{ffi::CString, mem::transmute, os::raw::c_char, sync::Mutex};
+
+#[cfg(feature = "libpanda")]
+use crate::{
+    inventory,
+    sys::{self, panda_init, panda_run, panda_set_library_mode},
+    InternalCallback, PPPCallbackSetup,
+};
 
 /// Architecture of the guest system
 #[allow(non_camel_case_types)]
@@ -14,21 +23,29 @@ pub enum Arch {
     x86_64,
     Arm,
     Mips,
+    AArch64,
 }
 
+// TODO: tie architecture to architecture being compiled for?
 impl fmt::Display for Arch {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", match self {
-            Self::i386 => "i386",
-            Self::x86_64 => "x86_64",
-            Self::Arm => "arm",
-            Self::Mips => "mips",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::i386 => "i386",
+                Self::x86_64 => "x86_64",
+                Self::Arm => "arm",
+                Self::Mips => "mips",
+                Self::AArch64 => "aarch64",
+            }
+        )
     }
 }
 
 /// Builder for creating PANDA instances. Only for use in libpanda mode.
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct Panda {
     expect_prompt: Option<String>,
     generic_qcow: Option<String>,
@@ -44,7 +61,20 @@ pub struct Panda {
     configurable: bool,
 }
 
+static LIBRARY_STARTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(feature = "libpanda")]
+lazy_static::lazy_static! {
+    static ref AFTER_INIT_FUNCS: Mutex<Vec<Box<dyn FnOnce() + Send + Sync + 'static>>>
+            = Mutex::new(Vec::new());
+}
+
 impl Panda {
+    /// Get whether or not libpanda has started running yet
+    fn is_started() -> bool {
+        LIBRARY_STARTED.load(Ordering::Relaxed)
+    }
+
     /// Create a new PANDA instance.
     ///
     /// ### Example
@@ -157,7 +187,7 @@ impl Panda {
 
         self
     }
-    
+
     /// Use generic PANDA Qcow for run
     ///
     /// ### Example
@@ -169,10 +199,10 @@ impl Panda {
     /// ```
     pub fn generic<S: Into<String>>(&mut self, generic: S) -> &mut Self {
         self.generic_qcow = Some(generic.into());
-        
+
         self
     }
-    
+
     /// Run the given replay in the PANDA instance. Equivalent to `-replay [name]` from the PANDA
     /// command line.
     ///
@@ -185,7 +215,7 @@ impl Panda {
     /// ```
     pub fn replay<S: Into<String>>(&mut self, replay: S) -> &mut Self {
         self.replay = Some(replay.into());
-        
+
         self
     }
 
@@ -201,7 +231,7 @@ impl Panda {
     /// struct StringSearch {
     ///     str: String
     /// }
-    /// 
+    ///
     /// fn main() {
     ///     Panda::new()
     ///         .generic("x86_64")
@@ -213,34 +243,34 @@ impl Panda {
     /// }
     /// ```
     pub fn plugin_args<T: PandaArgs>(&mut self, args: &T) -> &mut Self {
-        self.arg("-panda")
-            .arg(args.to_panda_args_str())
+        self.arg("-panda").arg(args.to_panda_args_str())
     }
 
+    #[cfg(feature = "libpanda")]
     fn get_args(&self) -> Vec<String> {
-        let generic_info =
-            self.generic_qcow
-                .as_ref()
-                .map(|generic| qcows::get_supported_image(generic));
+        let generic_info = self
+            .generic_qcow
+            .as_ref()
+            .map(|generic| qcows::get_supported_image(generic));
 
-        let qcow_path = self.qcow.clone().map(Some).unwrap_or_else(||{
+        let qcow_path = self.qcow.clone().map(Some).unwrap_or_else(|| {
             self.generic_qcow
                 .as_ref()
                 .map(|generic| qcows::get_generic_path(generic).display().to_string())
         });
-        
-        let arch = self.arch
+
+        let _arch = self
+            .arch
             .or_else(|| generic_info.as_ref().map(|x| x.arch))
             .unwrap_or(Arch::x86_64);
 
-        let mem = self.mem
+        let mem = self
+            .mem
             .as_ref()
             .map(|x| &x[..])
             .or_else(|| generic_info.as_ref().map(|x| x.default_mem))
             .unwrap_or("128M")
             .to_owned();
-
-        assert_eq!(arch, Arch::x86_64, "Only x86_64 is currently supported");
 
         let mut args = vec![
             "".into(), // filler, argv[0] == path of executable, n/a
@@ -290,34 +320,68 @@ impl Panda {
     ///     .run();
     /// ```
     pub fn run(&mut self) {
-        let args = self.get_args();
+        #[cfg(not(feature = "libpanda"))]
+        {
+            panic!("Panda::run cannot be used without the libpanda feature");
+        }
+        #[cfg(feature = "libpanda")]
+        {
+            let args = self.get_args();
 
-        println!("Running with args: {:?}", args);
+            println!("Running with args: {:?}", args);
 
-        let args: Vec<_> = args.into_iter().map(|x| CString::new(x).unwrap()).collect();
-        let args_ptrs: Vec<_> = args.iter().map(|s| s.as_ptr()).collect();
+            let args: Vec<_> = args.into_iter().map(|x| CString::new(x).unwrap()).collect();
+            let args_ptrs: Vec<_> = args.iter().map(|s| s.as_ptr()).collect();
 
-        std::env::set_var("PANDA_DIR", std::env::var("PANDA_PATH").unwrap());
+            std::env::set_var("PANDA_DIR", std::env::var("PANDA_PATH").unwrap());
 
-        let x = &mut 0i8;
-        let empty = &mut (x as *mut c_char);
-        unsafe {
-            for cb in inventory::iter::<Callback> {
-                sys::panda_register_callback(
-                    self as *mut _ as _,
-                    cb.cb_type,
-                    ::core::mem::transmute(cb.fn_pointer)
-                );
+            let x = &mut 0i8;
+            let empty = &mut (x as *mut c_char);
+            unsafe {
+                for cb in inventory::iter::<InternalCallback> {
+                    sys::panda_register_callback(
+                        self as *mut _ as _,
+                        cb.cb_type,
+                        ::core::mem::transmute(cb.fn_pointer),
+                    );
+                }
+
+                if LIBRARY_STARTED.swap(true, Ordering::Relaxed) {
+                    panic!("libpanda cannot be run twice in the same process");
+                }
+                panda_set_library_mode(true);
+                panda_init(args_ptrs.len() as i32, transmute(args_ptrs.as_ptr()), empty);
+
+                for cb in inventory::iter::<PPPCallbackSetup> {
+                    cb.0();
+                }
+
+                let mut init_funcs = Vec::new();
+                core::mem::swap(&mut *AFTER_INIT_FUNCS.lock().unwrap(), &mut init_funcs);
+                for init_func in init_funcs {
+                    init_func()
+                }
+
+                panda_run();
+                LIBRARY_STARTED.store(false, Ordering::Relaxed);
             }
+        }
+    }
 
-            panda_set_library_mode(true);
-            panda_init(args_ptrs.len() as i32, transmute(args_ptrs.as_ptr()), empty);
-            
-            for cb in inventory::iter::<PPPCallbackSetup> {
-                cb.0();
+    /// Queue up a function that should run before libpanda has started but after
+    /// the libpanda has been initialized. If run under a plugin context (e.g. no
+    /// libpanda), or libpanda is currently running, then the function will run immediately.
+    ///
+    /// This is useful for functions that may require waiting until things like arguments
+    /// or OS has been set, such as setting up an OSI callback.
+    pub fn run_after_init(func: impl FnOnce() + Send + Sync + 'static) {
+        if cfg!(feature = "libpanda") && !Panda::is_started() {
+            #[cfg(feature = "libpanda")]
+            {
+                AFTER_INIT_FUNCS.lock().unwrap().push(Box::new(func));
             }
-
-            panda_run();
+        } else {
+            func()
         }
     }
 }
